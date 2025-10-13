@@ -12,9 +12,22 @@ import traceback
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# === CLEAN ITEM NAME ===
+# === CLEAN ITEM NAME (handles ™, ★, etc.) ===
 def clean_item_name(name):
-    name = name.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    replacements = {
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+        "™": "",
+        "★": "",
+        "–": "-",
+        "—": "-",
+        " ": " ",  # Non-breaking space
+    }
+    for old, new in replacements.items():
+        name = name.replace(old, new)
+
     name = unicodedata.normalize("NFKC", name)
     return name.strip()
 
@@ -25,7 +38,7 @@ def get_price(item_name, retries=3):
     params = {
         "country": "PH",
         "currency": 12,  # Peso
-        "appid": 730,
+        "appid": 730,    # CS2 App ID
         "market_hash_name": item_name,
     }
 
@@ -53,10 +66,10 @@ def get_price(item_name, retries=3):
 # === TELEGRAM COMMANDS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome to the Dota 2 Price Checker Bot!\n\n"
+        "👋 Welcome to the CS2 Price Checker Bot!\n\n"
         "Send me a list of item names (one per line), and I’ll scrape their Steam Market prices in PHP.\n\n"
         "Example:\n"
-        "```\nAK-47 | Neon Rider (Battle-Scarred)\nSealed Genesis Terminal\nKilowatt Case\n```",
+        "```\nStatTrak™ AK-47 | Redline (Field-Tested)\n★ M9 Bayonet | Doppler\nRevolution Case\n```",
         parse_mode="Markdown",
     )
 
@@ -76,10 +89,10 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send loading message
         loading_msg = await update.message.reply_text(f"⏳ Starting scrape for {len(items)} items...")
 
-        # Prepare output filename (no directory to avoid makedirs error)
+        # Prepare output filename
         ph_time = datetime.now(pytz.timezone("Asia/Manila"))
         now = ph_time.strftime("%Y-%m-%d_%H-%M")
-        output_file = f"Price_Checker_Dota2_{now}.txt"
+        output_file = f"Price_Checker_CS2_{now}.txt"
 
         results = []
         success_count = 0
@@ -93,10 +106,16 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 clean_name = clean_item_name(item)
                 price = get_price(clean_name)
 
-                # Clean up PHP symbol for total calc
+                # Clean PHP sign for total calc
                 price_num = 0.0
                 if price and isinstance(price, str):
-                    clean_price = price.replace("₱", "").replace("P", "").replace(",", "").strip()
+                    clean_price = (
+                        price.replace("₱", "")
+                        .replace("P", "")
+                        .replace(",", "")
+                        .replace(" ", "")
+                        .strip()
+                    )
                     try:
                         price_num = float(clean_price)
                         total_value += price_num
@@ -111,16 +130,16 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 results.append(f"{item} → {price}")
                 f.write(f"{item}\t{clean_name}\t{price}\n")
 
-                # Telegram progress every 20 items
+                # Telegram progress update
                 if i % 20 == 0 or i == len(items):
                     await update.message.reply_text(f"📊 Progress: {i}/{len(items)} items scraped...")
 
                 time.sleep(2.5)
 
-        # Delete the “loading” message
+        # Delete “loading” message
         await loading_msg.delete()
 
-        # Send results (split if long)
+        # Send result in parts if too long
         result_text = "\n".join(results)
         chunk_size = 3500
         for i in range(0, len(result_text), chunk_size):
@@ -139,10 +158,10 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(summary, parse_mode="Markdown")
 
-        # Send text file
+        # Send result text file
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(output_file, "rb"))
 
-    except Exception as e:
+    except Exception:
         error_message = f"❌ An error occurred:\n```\n{traceback.format_exc()}\n```"
         await update.message.reply_text(error_message, parse_mode="Markdown")
 
@@ -152,7 +171,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, scrape_items))
-    print("🤖 Dota 2 Price Checker Bot is running...")
+    print("🤖 CS2 Price Checker Bot is running...")
     app.run_polling()
 
 
