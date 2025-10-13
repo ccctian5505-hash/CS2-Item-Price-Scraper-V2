@@ -56,7 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Welcome to the Dota 2 Price Checker Bot!\n\n"
         "Send me a list of item names (one per line), and I’ll scrape their Steam Market prices in PHP.\n\n"
         "Example:\n"
-        "```\nProfane Union\nTempest Revelation\nScavenging Guttleslug\n```",
+        "```\nAK-47 | Neon Rider (Battle-Scarred)\nSealed Genesis Terminal\nKilowatt Case\n```",
         parse_mode="Markdown",
     )
 
