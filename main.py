@@ -2,7 +2,6 @@ import os
 import time
 import requests
 import unicodedata
-import urllib.parse
 from datetime import datetime
 import pytz
 from telegram import Update
@@ -13,7 +12,7 @@ import traceback
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# === CLEAN ITEM NAME (normalize text safely) ===
+# === CLEAN ITEM NAME (keeps ™ and ★ intact) ===
 def clean_item_name(name):
     replacements = {
         "’": "'",
@@ -30,39 +29,32 @@ def clean_item_name(name):
     return name.strip()
 
 
-# === FIXED PRICE SCRAPER (handles ™ + ★ properly) ===
+# === PRICE SCRAPER (RAW UTF-8 query, no encoding) ===
 def get_price(item_name, retries=3):
-    base_url = "https://steamcommunity.com/market/priceoverview/"
+    url = "https://steamcommunity.com/market/priceoverview/"
+    params = {
+        "country": "PH",
+        "currency": 12,  # PHP
+        "appid": 730,    # CS2 App ID
+        "market_hash_name": item_name,  # Send raw UTF-8
+    }
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
-    # Proper Steam double encoding
-    # ™ = %E2%84%A2 → double encoded = %25E2%2584%25A2
-    # ★ = %E2%98%85 → double encoded = %25E2%2598%2585
-    encoded_name = (
-        item_name.replace("™", "%25E2%2584%25A2")
-        .replace("★", "%25E2%2598%2585")
-    )
-
-    encoded_name = urllib.parse.quote(encoded_name, safe="%|() ")
-
-    full_url = (
-        f"{base_url}?country=PH&currency=12&appid=730&market_hash_name={encoded_name}"
-    )
-
     for attempt in range(retries):
         try:
-            response = requests.get(full_url, headers=headers, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if data.get("success"):
                     price = data.get("lowest_price") or data.get("median_price") or "No price listed"
                     if price:
                         return price
-        except Exception:
-            pass
+        except Exception as e:
+            print("⚠️ Request error:", e)
         time.sleep(2)
 
     return "No price listed"
@@ -72,9 +64,9 @@ def get_price(item_name, retries=3):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to the *CS2 Price Checker Bot (PHP)*!\n\n"
-        "Send me a list of item names (one per line), and I’ll scrape their Steam Market prices in PHP.\n\n"
+        "Send me a list of item names (one per line), and I’ll scrape their Steam Market prices.\n\n"
         "Example:\n"
-        "```\n★ StatTrak™ Survival Knife | Rust Coat (Battle-Scarred)\nStatTrak™ Glock-18 | Moonrise (Field-Tested)\nRevolution Case\n```",
+        "```\n★ StatTrak™ Survival Knife | Rust Coat (Battle-Scarred)\nStatTrak™ AK-47 | Redline (Field-Tested)\nRevolution Case\n```",
         parse_mode="Markdown",
     )
 
@@ -108,7 +100,6 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 clean_name = clean_item_name(item)
                 price = get_price(clean_name)
 
-                # Clean PHP sign for total calc
                 price_num = 0.0
                 if price and isinstance(price, str):
                     clean_price = (
