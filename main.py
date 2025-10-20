@@ -8,85 +8,90 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import traceback
 
+# === ENVIRONMENT VARIABLES ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# === Clean item name properly ===
+# === CLEAN ITEM NAME (keep ™, ★ intact) ===
 def clean_item_name(name):
-    name = name.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
-    name = name.replace("–", "-").replace("—", "-").replace("\xa0", " ")
-    name = name.replace("™", "\u2122")  # Ensure correct TM
-    name = name.replace("★", "★")       # Keep star
+    replacements = {
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+        "–": "-",
+        "—": "-",
+        "\xa0": " ",  # replace non-breaking spaces
+    }
+    for old, new in replacements.items():
+        name = name.replace(old, new)
+
     name = unicodedata.normalize("NFKC", name)
     return name.strip()
 
-# === Steam price fetch ===
+
+# === SCRAPE PRICE FUNCTION ===
 def get_price(item_name, retries=3):
     url = "https://steamcommunity.com/market/priceoverview/"
+    params = {
+        "country": "PH",
+        "currency": 12,  # Peso
+        "appid": 730,    # CS2 App ID
+        "market_hash_name": item_name,
+    }
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
-    def query(name):
-        params = {
-            "country": "PH",
-            "currency": 12,  # PHP
-            "appid": 730,
-            "market_hash_name": name,
-        }
+    for attempt in range(retries):
         try:
-            r = requests.get(url, params=params, headers=headers, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
                 if data.get("success"):
-                    return data.get("lowest_price") or data.get("median_price")
-        except:
+                    price = data.get("lowest_price") or data.get("median_price") or "No price listed"
+                    if price:
+                        return price
+        except Exception:
             pass
-        return None
-
-    # Try normal first
-    for _ in range(retries):
-        price = query(item_name)
-        if price:
-            return price
         time.sleep(2)
 
-    # Fallback — remove star & TM symbols
-    simple_name = item_name.replace("★", "").replace("™", "").strip()
-    for _ in range(retries):
-        price = query(simple_name)
-        if price:
-            return price
-        time.sleep(2)
+    return "Error fetching price"
 
-    return "No price listed"
 
-# === Telegram commands ===
+# === TELEGRAM COMMANDS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 *CS2 Price Checker Bot*\n\n"
-        "Send item names (one per line) to check Steam Market prices in PHP.\n\n"
+        "👋 Welcome to the CS2 Price Checker Bot!\n\n"
+        "Send me a list of item names (one per line), and I’ll scrape their Steam Market prices in PHP.\n\n"
         "Example:\n"
-        "```\n★ Bowie Knife | Bright Water (Minimal Wear)\nStatTrak™ Glock-18 | Moonrise (Field-Tested)\n```",
-        parse_mode="Markdown"
+        "```\nStatTrak™ AK-47 | Redline (Field-Tested)\n★ M9 Bayonet | Doppler\nRevolution Case\n```",
+        parse_mode="Markdown",
     )
+
 
 async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         items_text = update.message.text.strip()
         items = [line.strip() for line in items_text.splitlines() if line.strip()]
+
         if not items:
             await update.message.reply_text("⚠️ Please send valid item names (one per line).")
             return
 
+        start_time = time.time()
         loading_msg = await update.message.reply_text(f"⏳ Starting scrape for {len(items)} items...")
 
         ph_time = datetime.now(pytz.timezone("Asia/Manila"))
         now = ph_time.strftime("%Y-%m-%d_%H-%M")
         output_file = f"Price_Checker_CS2_{now}.txt"
 
-        results, total_value, success_count, fail_count = [], 0.0, 0, 0
+        results = []
+        success_count = 0
+        fail_count = 0
+        total_value = 0.0
 
         with open(output_file, "w", encoding="utf-8") as f:
             f.write("Source Name\tScraped Name\tPrice (PHP)\n")
@@ -95,17 +100,23 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 clean_name = clean_item_name(item)
                 price = get_price(clean_name)
 
-                # Extract numeric value if possible
+                # Clean PHP sign for total calc
                 price_num = 0.0
-                if isinstance(price, str):
-                    clean_price = price.replace("₱", "").replace("P", "").replace(",", "").strip()
+                if price and isinstance(price, str):
+                    clean_price = (
+                        price.replace("₱", "")
+                        .replace("P", "")
+                        .replace(",", "")
+                        .replace(" ", "")
+                        .strip()
+                    )
                     try:
                         price_num = float(clean_price)
                         total_value += price_num
-                    except:
+                    except ValueError:
                         pass
 
-                if price not in ["No price listed", "Error fetching price"]:
+                if price not in ["Error fetching price", "No price listed"]:
                     success_count += 1
                 else:
                     fail_count += 1
@@ -121,31 +132,38 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await loading_msg.delete()
 
         # Send results in chunks
-        text_output = "\n".join(results)
-        for i in range(0, len(text_output), 3500):
-            await update.message.reply_text(text_output[i:i+3500])
+        result_text = "\n".join(results)
+        chunk_size = 3500
+        for i in range(0, len(result_text), chunk_size):
+            await update.message.reply_text(result_text[i:i + chunk_size])
 
+        elapsed = time.time() - start_time
+        mins, secs = divmod(int(elapsed), 60)
         summary = (
             f"\n✅ *Scraping complete!*\n"
             f"📦 Total Items: {len(items)}\n"
             f"✅ Success: {success_count}\n"
             f"❌ Failed: {fail_count}\n"
-            f"💰 Total Value: ₱{total_value:,.2f}"
+            f"💰 Total Value: ₱{total_value:,.2f}\n"
+            f"⏱ Duration: {mins}m {secs}s"
         )
         await update.message.reply_text(summary, parse_mode="Markdown")
 
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(output_file, "rb"))
 
     except Exception:
-        await update.message.reply_text(f"❌ Error:\n```\n{traceback.format_exc()}\n```", parse_mode="Markdown")
+        error_message = f"❌ An error occurred:\n```\n{traceback.format_exc()}\n```"
+        await update.message.reply_text(error_message, parse_mode="Markdown")
 
-# === Main ===
+
+# === MAIN FUNCTION ===
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, scrape_items))
     print("🤖 CS2 Price Checker Bot is running...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
