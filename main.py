@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import unicodedata
+import urllib.parse
 from datetime import datetime
 import pytz
 from telegram import Update
@@ -19,11 +20,9 @@ def clean_item_name(name):
         "‘": "'",
         "“": '"',
         "”": '"',
-        "™": "",
-        "★": "",
         "–": "-",
         "—": "-",
-        " ": " ",  # Non-breaking space
+        "\u00a0": " ",  # non-breaking space
     }
     for old, new in replacements.items():
         name = name.replace(old, new)
@@ -31,10 +30,14 @@ def clean_item_name(name):
     name = unicodedata.normalize("NFKC", name)
     return name.strip()
 
-
-# === SCRAPE PRICE FUNCTION ===
+# === SCRAPE PRICE FUNCTION (with URL encoding fix) ===
 def get_price(item_name, retries=3):
     url = "https://steamcommunity.com/market/priceoverview/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     params = {
         "country": "PH",
         "currency": 12,  # Peso
@@ -42,14 +45,12 @@ def get_price(item_name, retries=3):
         "market_hash_name": item_name,
     }
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
+    encoded_name = urllib.parse.quote(item_name, safe="")  # encode all special characters
+    full_url = f"{url}?country=PH&currency=12&appid=730&market_hash_name={encoded_name}"
 
     for attempt in range(retries):
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response = requests.get(full_url, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if data.get("success"):
@@ -62,17 +63,15 @@ def get_price(item_name, retries=3):
 
     return "Error fetching price"
 
-
 # === TELEGRAM COMMANDS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome to the CS2 Price Checker Bot!\n\n"
+        "👋 Welcome to the *CS2 Price Checker Bot!*\n\n"
         "Send me a list of item names (one per line), and I’ll scrape their Steam Market prices in PHP.\n\n"
         "Example:\n"
-        "```\nStatTrak™ AK-47 | Redline (Field-Tested)\n★ M9 Bayonet | Doppler\nRevolution Case\n```",
+        "```\n★ StatTrak™ M9 Bayonet | Doppler\nStatTrak™ AK-47 | Redline (Field-Tested)\nRevolution Case\n```",
         parse_mode="Markdown",
     )
-
 
 async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -83,13 +82,9 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Please send valid item names (one per line).")
             return
 
-        # Start timing
         start_time = time.time()
-
-        # Send loading message
         loading_msg = await update.message.reply_text(f"⏳ Starting scrape for {len(items)} items...")
 
-        # Prepare output filename
         ph_time = datetime.now(pytz.timezone("Asia/Manila"))
         now = ph_time.strftime("%Y-%m-%d_%H-%M")
         output_file = f"Price_Checker_CS2_{now}.txt"
@@ -136,10 +131,9 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 time.sleep(2.5)
 
-        # Delete “loading” message
         await loading_msg.delete()
 
-        # Send result in parts if too long
+        # Send results in parts if long
         result_text = "\n".join(results)
         chunk_size = 3500
         for i in range(0, len(result_text), chunk_size):
@@ -158,13 +152,12 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(summary, parse_mode="Markdown")
 
-        # Send result text file
+        # Send the text file
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(output_file, "rb"))
 
     except Exception:
         error_message = f"❌ An error occurred:\n```\n{traceback.format_exc()}\n```"
         await update.message.reply_text(error_message, parse_mode="Markdown")
-
 
 # === MAIN FUNCTION ===
 def main():
@@ -173,7 +166,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, scrape_items))
     print("🤖 CS2 Price Checker Bot is running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
