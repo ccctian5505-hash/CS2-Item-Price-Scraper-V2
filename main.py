@@ -30,23 +30,26 @@ def clean_item_name(name):
     name = unicodedata.normalize("NFKC", name)
     return name.strip()
 
-# === SCRAPE PRICE FUNCTION (with URL encoding fix) ===
+# === SCRAPE PRICE FUNCTION (FULL FIX FOR TM & STAR) ===
 def get_price(item_name, retries=3):
-    url = "https://steamcommunity.com/market/priceoverview/"
+    base_url = "https://steamcommunity.com/market/priceoverview/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
-    params = {
-        "country": "PH",
-        "currency": 12,  # Peso
-        "appid": 730,    # CS2 App ID
-        "market_hash_name": item_name,
-    }
+    # 🔥 Properly encode special characters
+    fixed_name = (
+        item_name.replace("™", "%E2%84%A2")  # trademark symbol
+        .replace("★", "%E2%98%85")          # star symbol
+    )
 
-    encoded_name = urllib.parse.quote(item_name, safe="")  # encode all special characters
-    full_url = f"{url}?country=PH&currency=12&appid=730&market_hash_name={encoded_name}"
+    encoded_name = urllib.parse.quote(fixed_name, safe="%|()")  # keep | and () intact
+
+    # Build full URL with encoded name
+    full_url = (
+        f"{base_url}?country=PH&currency=12&appid=730&market_hash_name={encoded_name}"
+    )
 
     for attempt in range(retries):
         try:
@@ -66,13 +69,14 @@ def get_price(item_name, retries=3):
 # === TELEGRAM COMMANDS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome to the *CS2 Price Checker Bot!*\n\n"
+        "👋 Welcome to the *CS2 Price Checker Bot (PHP)*!\n\n"
         "Send me a list of item names (one per line), and I’ll scrape their Steam Market prices in PHP.\n\n"
         "Example:\n"
-        "```\n★ StatTrak™ M9 Bayonet | Doppler\nStatTrak™ AK-47 | Redline (Field-Tested)\nRevolution Case\n```",
+        "```\n★ StatTrak™ Survival Knife | Rust Coat (Battle-Scarred)\nStatTrak™ Glock-18 | Moonrise (Field-Tested)\nRevolution Case\n```",
         parse_mode="Markdown",
     )
 
+# === MAIN SCRAPE FUNCTION ===
 async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         items_text = update.message.text.strip()
@@ -101,7 +105,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 clean_name = clean_item_name(item)
                 price = get_price(clean_name)
 
-                # Clean PHP sign for total calc
+                # Parse numeric price for total calc
                 price_num = 0.0
                 if price and isinstance(price, str):
                     clean_price = (
@@ -125,7 +129,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 results.append(f"{item} → {price}")
                 f.write(f"{item}\t{clean_name}\t{price}\n")
 
-                # Telegram progress update
+                # Telegram progress every 20 items
                 if i % 20 == 0 or i == len(items):
                     await update.message.reply_text(f"📊 Progress: {i}/{len(items)} items scraped...")
 
@@ -133,13 +137,12 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await loading_msg.delete()
 
-        # Send results in parts if long
+        # Send scraped results in chunks
         result_text = "\n".join(results)
         chunk_size = 3500
         for i in range(0, len(result_text), chunk_size):
             await update.message.reply_text(result_text[i:i + chunk_size])
 
-        # Summary with runtime
         elapsed = time.time() - start_time
         mins, secs = divmod(int(elapsed), 60)
         summary = (
@@ -152,7 +155,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(summary, parse_mode="Markdown")
 
-        # Send the text file
+        # Send text file result
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(output_file, "rb"))
 
     except Exception:
