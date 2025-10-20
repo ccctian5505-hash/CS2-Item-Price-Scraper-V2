@@ -12,16 +12,18 @@ import traceback
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# === CLEAN ITEM NAME (keep ™, ★ intact) ===
+# === CLEAN ITEM NAME (handles ™, ★, etc.) ===
 def clean_item_name(name):
     replacements = {
         "’": "'",
         "‘": "'",
         "“": '"',
         "”": '"',
+        "™": "",
+        "★": "",
         "–": "-",
         "—": "-",
-        "\xa0": " ",  # replace non-breaking spaces
+        " ": " ",  # Non-breaking space
     }
     for old, new in replacements.items():
         name = name.replace(old, new)
@@ -81,9 +83,13 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Please send valid item names (one per line).")
             return
 
+        # Start timing
         start_time = time.time()
+
+        # Send loading message
         loading_msg = await update.message.reply_text(f"⏳ Starting scrape for {len(items)} items...")
 
+        # Prepare output filename
         ph_time = datetime.now(pytz.timezone("Asia/Manila"))
         now = ph_time.strftime("%Y-%m-%d_%H-%M")
         output_file = f"Price_Checker_CS2_{now}.txt"
@@ -124,19 +130,22 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 results.append(f"{item} → {price}")
                 f.write(f"{item}\t{clean_name}\t{price}\n")
 
+                # Telegram progress update
                 if i % 20 == 0 or i == len(items):
                     await update.message.reply_text(f"📊 Progress: {i}/{len(items)} items scraped...")
 
                 time.sleep(2.5)
 
+        # Delete “loading” message
         await loading_msg.delete()
 
-        # Send results in chunks
+        # Send result in parts if too long
         result_text = "\n".join(results)
         chunk_size = 3500
         for i in range(0, len(result_text), chunk_size):
             await update.message.reply_text(result_text[i:i + chunk_size])
 
+        # Summary with runtime
         elapsed = time.time() - start_time
         mins, secs = divmod(int(elapsed), 60)
         summary = (
@@ -149,6 +158,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(summary, parse_mode="Markdown")
 
+        # Send result text file
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(output_file, "rb"))
 
     except Exception:
