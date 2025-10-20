@@ -7,35 +7,28 @@ import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import traceback
+import urllib.parse
 
-# === ENVIRONMENT VARIABLES ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# === CLEAN ITEM NAME (preserve symbols like ★ and ™) ===
+# === Clean item name properly for Steam ===
 def clean_item_name(name):
-    replacements = {
-        "’": "'",
-        "‘": "'",
-        "“": '"',
-        "”": '"',
-        "–": "-",
-        "—": "-",
-        "\xa0": " ",  # Replace non-breaking space
-    }
-    for old, new in replacements.items():
-        name = name.replace(old, new)
-
+    # Normalize and replace characters
+    name = name.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    name = name.replace("–", "-").replace("—", "-").replace("\xa0", " ")
+    name = name.replace("™", "\u2122")  # Ensure correct TM symbol
+    name = name.replace("★", "★")       # Keep star as-is
     name = unicodedata.normalize("NFKC", name)
     return name.strip()
 
-# === SCRAPE PRICE FUNCTION ===
+# === Get price from Steam ===
 def get_price(item_name, retries=3):
     url = "https://steamcommunity.com/market/priceoverview/"
     params = {
         "country": "PH",
-        "currency": 12,  # PHP
-        "appid": 730,    # CS2 App ID
+        "currency": 12,
+        "appid": 730,
         "market_hash_name": item_name,
     }
 
@@ -43,6 +36,9 @@ def get_price(item_name, retries=3):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept-Language": "en-US,en;q=0.9",
     }
+
+    # Encode safely
+    params["market_hash_name"] = urllib.parse.quote(params["market_hash_name"], safe="")
 
     for attempt in range(retries):
         try:
@@ -56,14 +52,14 @@ def get_price(item_name, retries=3):
         time.sleep(2)
     return "Error fetching price"
 
-# === TELEGRAM COMMANDS ===
+# === Telegram Commands ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome to the *CS2 Price Checker Bot!*\n\n"
-        "Send a list of item names (one per line), and I’ll get their Steam Market prices in PHP.\n\n"
+        "👋 *CS2 Price Checker Bot*\n\n"
+        "Send item names (one per line) to check their Steam Market prices in PHP.\n\n"
         "Example:\n"
-        "```\n★ StatTrak™ AK-47 | Redline (Field-Tested)\nRevolution Case\n```",
-        parse_mode="Markdown",
+        "```\n★ Bowie Knife | Bright Water (Minimal Wear)\nStatTrak™ Glock-18 | Moonrise (Field-Tested)\n```",
+        parse_mode="Markdown"
     )
 
 async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,14 +70,13 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Please send valid item names (one per line).")
             return
 
-        start_time = time.time()
         loading_msg = await update.message.reply_text(f"⏳ Starting scrape for {len(items)} items...")
 
         ph_time = datetime.now(pytz.timezone("Asia/Manila"))
         now = ph_time.strftime("%Y-%m-%d_%H-%M")
         output_file = f"Price_Checker_CS2_{now}.txt"
 
-        results, success_count, fail_count, total_value = [], 0, 0, 0.0
+        results, total_value, success_count, fail_count = [], 0.0, 0, 0
 
         with open(output_file, "w", encoding="utf-8") as f:
             f.write("Source Name\tScraped Name\tPrice (PHP)\n")
@@ -90,7 +85,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 clean_name = clean_item_name(item)
                 price = get_price(clean_name)
 
-                # Handle price for total calculation
+                # Convert price text to numeric
                 clean_price = str(price).replace("₱", "").replace("P", "").replace(",", "").strip()
                 try:
                     total_value += float(clean_price)
@@ -105,6 +100,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 results.append(f"{item} → {price}")
                 f.write(f"{item}\t{clean_name}\t{price}\n")
 
+                # Update progress
                 if i % 20 == 0 or i == len(items):
                     await update.message.reply_text(f"📊 Progress: {i}/{len(items)} items scraped...")
 
@@ -112,31 +108,25 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await loading_msg.delete()
 
-        # Split long messages
+        # Send results
         result_text = "\n".join(results)
         chunk_size = 3500
         for i in range(0, len(result_text), chunk_size):
             await update.message.reply_text(result_text[i:i + chunk_size])
 
-        # Summary
-        elapsed = time.time() - start_time
-        mins, secs = divmod(int(elapsed), 60)
         summary = (
-            f"\n✅ *Scraping Complete!*\n"
+            f"\n✅ *Scraping complete!*\n"
             f"📦 Total Items: {len(items)}\n"
             f"✅ Success: {success_count}\n"
             f"❌ Failed: {fail_count}\n"
-            f"💰 Total Value: ₱{total_value:,.2f}\n"
-            f"⏱ Duration: {mins}m {secs}s"
+            f"💰 Total Value: ₱{total_value:,.2f}"
         )
         await update.message.reply_text(summary, parse_mode="Markdown")
 
-        # Send result file
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(output_file, "rb"))
 
     except Exception:
-        error_message = f"❌ Error occurred:\n```\n{traceback.format_exc()}\n```"
-        await update.message.reply_text(error_message, parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Error:\n```\n{traceback.format_exc()}\n```", parse_mode="Markdown")
 
 # === MAIN ===
 def main():
