@@ -14,39 +14,37 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 
-# === CLEAN ITEM NAME (StatTrak™ + ★ FIXED) ===
+# === CLEAN ITEM NAME (StatTrak™ → StatTrakTM FIX) ===
 def clean_item_name(name: str) -> str:
-    # Standardize all characters Steam requires EXACTLY
     replacements = {
-        # Normalize quotes and dashes
+        # Normalize quotes/dashes
         "’": "'",
         "‘": "'",
         "“": '"',
         "”": '"',
         "–": "-",
         "—": "-",
-        "\u00a0": " ",  # non-breaking space
+        "\u00a0": " ",
 
-        # Normalize ALL trademark variations → real ™
-        "\u2122": "™",  # standard trademark symbol
-        "\u0099": "™",  # Windows-1252 hidden symbol
-        "™": "™",       # ensure consistent
+        # Trademark MUST convert to TM for Steam API to work
+        "\u2122": "TM",
+        "\u0099": "TM",
+        "™": "TM",
 
-        # Normalize star variations → real ★
-        "★": "★",
-        "\u2605": "★",  # star unicode (sometimes different)
+        # Normalize star forms
+        "\u2605": "★",
     }
 
     for old, new in replacements.items():
         name = name.replace(old, new)
 
-    # Final unicode normalization
+    # Normalize unicode
     name = unicodedata.normalize("NFKC", name)
 
     return name.strip()
 
 
-# === GET PRICE (from Steam Market) ===
+# === GET PRICE FROM STEAM MARKET ===
 def get_price(item_name: str, appid: int = 730, retries: int = 3) -> str:
     encoded = quote_plus(item_name)
 
@@ -65,10 +63,14 @@ def get_price(item_name: str, appid: int = 730, retries: int = 3) -> str:
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
+                # Debug print (optional)
+                print("DEBUG:", url, data)
+
                 if data.get("success"):
                     return data.get("lowest_price") or data.get("median_price") or "No price listed"
-        except:
+        except Exception:
             pass
+
         time.sleep(1.5)
 
     return "No price listed"
@@ -78,10 +80,11 @@ def get_price(item_name: str, appid: int = 730, retries: int = 3) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome!\n\n"
-        "Send me CS2 item names (one per line) and I’ll fetch Steam Market prices.\n\n"
+        "Send me CS2 item names (one per line).\n"
+        "StatTrak™ will be auto-fixed → StatTrakTM.\n"
         "Example:\n"
-        "StatTrak™ AWP | Asiimov (Field-Tested)\n"
-        "★ Butterfly Knife | Marble Fade\n"
+        "StatTrak™ AWP | Asiimov (FT)\n"
+        "★ Karambit | Doppler\n"
         "Revolution Case"
     )
 
@@ -104,18 +107,18 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output_file = f"Price_Checker_CS2_{now}.txt"
 
         results = []
-        total_value = 0.0
         success = 0
         fail = 0
+        total_value = 0.0
 
         with open(output_file, "w", encoding="utf-8") as fout:
-            fout.write("Source Name\tScraped Name\tPrice (PHP)\n")
+            fout.write("Source\tCleaned\tPrice (PHP)\n")
 
             for i, src in enumerate(items, start=1):
                 cleaned = clean_item_name(src)
                 price = get_price(cleaned)
 
-                # attempt numeric parsing
+                # Try to parse PHP numeric value
                 value = 0.0
                 if price not in ("No price listed", ""):
                     try:
@@ -123,7 +126,6 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             price.replace("₱", "")
                             .replace("P", "")
                             .replace(",", "")
-                            .replace(" ", "")
                             .strip()
                         )
                         value = float(p)
@@ -137,19 +139,17 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 fout.write(f"{src}\t{cleaned}\t{price}\n")
                 results.append(f"{src} → {price}")
 
-                # Progress update every 20 items
                 if i % 20 == 0 or i == len(items):
                     await update.message.reply_text(f"📊 Progress: {i}/{len(items)} done...")
 
                 time.sleep(2.2)
 
-        # Delete loading message
         await loading.delete()
 
-        # Send results in Telegram (chunked)
-        full_text = "\n".join(results)
-        for i in range(0, len(full_text), 3500):
-            await update.message.reply_text(full_text[i:i+3500])
+        # Send results (chunked)
+        joined = "\n".join(results)
+        for i in range(0, len(joined), 3500):
+            await update.message.reply_text(joined[i:i+3500])
 
         # Summary
         summary = (
@@ -175,10 +175,10 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# === MAIN BOT ===
+# === MAIN BOT ENTRY ===
 def main():
     if not BOT_TOKEN:
-        raise ValueError("❌ BOT_TOKEN missing in environment variables.")
+        raise ValueError("❌ BOT_TOKEN missing.")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
