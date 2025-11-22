@@ -14,27 +14,20 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 
-# === CLEAN ITEM NAME (FINAL FIX — KEEP ™ EXACTLY) ===
+# === CLEAN ITEM NAME (FIXED - PRESERVE ™ SYMBOL) ===
 def clean_item_name(name: str) -> str:
     replacements = {
         # Normalize quotes
-        "’": "'",
-        "‘": "'",
-        "“": '"',
-        "”": '"',
+        "'": "'",
+        "'": "'",
+        """: '"',
+        """: '"',
 
         # Normalize ALL hyphens/dashes
         "–": "-",
         "—": "-",
         "\u2011": "-",  # non-breaking hyphen
         "\u00a0": " ",  # non-breaking space
-
-        # Trademark normalization (KEEP ™ EXACTLY)
-        "\u0099": "™",   # hidden variant
-        "\u2122": "™",   # unicode trademark symbol
-        # DO NOT convert ™ → TM
-        # DO NOT remove ™
-        # "™": "™",  # leave unchanged
 
         # Normalize star variations
         "\u2605": "★",
@@ -43,8 +36,17 @@ def clean_item_name(name: str) -> str:
     for old, new in replacements.items():
         name = name.replace(old, new)
 
-    # Final unicode normalization
-    name = unicodedata.normalize("NFKC", name)
+    # Ensure StatTrak™ has the correct trademark symbol (U+2122)
+    # Handle various input formats
+    name = name.replace("StatTrak(TM)", "StatTrak™")
+    name = name.replace("StatTrakTM", "StatTrak™")
+    name = name.replace("StatTrak(tm)", "StatTrak™")
+    name = name.replace("StatTrak tm", "StatTrak™")
+    name = name.replace("StatTrak TM", "StatTrak™")
+    
+    # DO NOT use NFKC normalization as it converts ™ to TM
+    # Instead, use NFC which preserves the trademark symbol
+    name = unicodedata.normalize("NFC", name)
 
     return name.strip()
 
