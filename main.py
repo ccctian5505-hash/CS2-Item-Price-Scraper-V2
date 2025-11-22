@@ -14,31 +14,36 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 
-# === CLEAN ITEM NAME (StatTrak™ → StatTrakTM FIX) ===
+# === CLEAN ITEM NAME (FINAL FIX — KEEP ™ EXACTLY) ===
 def clean_item_name(name: str) -> str:
     replacements = {
-        # Normalize quotes/dashes
+        # Normalize quotes
         "’": "'",
         "‘": "'",
         "“": '"',
         "”": '"',
+
+        # Normalize ALL hyphens/dashes
         "–": "-",
         "—": "-",
-        "\u00a0": " ",
+        "\u2011": "-",  # non-breaking hyphen
+        "\u00a0": " ",  # non-breaking space
 
-        # Trademark MUST convert to TM for Steam API to work
-        "\u2122": "TM",
-        "\u0099": "TM",
-        "™": "TM",
+        # Trademark normalization (KEEP ™ EXACTLY)
+        "\u0099": "™",   # hidden variant
+        "\u2122": "™",   # unicode trademark symbol
+        # DO NOT convert ™ → TM
+        # DO NOT remove ™
+        # "™": "™",  # leave unchanged
 
-        # Normalize star forms
+        # Normalize star variations
         "\u2605": "★",
     }
 
     for old, new in replacements.items():
         name = name.replace(old, new)
 
-    # Normalize unicode
+    # Final unicode normalization
     name = unicodedata.normalize("NFKC", name)
 
     return name.strip()
@@ -63,8 +68,7 @@ def get_price(item_name: str, appid: int = 730, retries: int = 3) -> str:
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
-                # Debug print (optional)
-                print("DEBUG:", url, data)
+                print("DEBUG:", item_name, url, data)
 
                 if data.get("success"):
                     return data.get("lowest_price") or data.get("median_price") or "No price listed"
@@ -81,9 +85,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome!\n\n"
         "Send me CS2 item names (one per line).\n"
-        "StatTrak™ will be auto-fixed → StatTrakTM.\n"
+        "StatTrak™ is now handled correctly.\n\n"
         "Example:\n"
-        "StatTrak™ AWP | Asiimov (FT)\n"
+        "StatTrak™ MP7 | Bloodsport (Field-Tested)\n"
+        "StatTrak™ AWP | Redline (FT)\n"
         "★ Karambit | Doppler\n"
         "Revolution Case"
     )
@@ -101,7 +106,6 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         loading = await update.message.reply_text(f"⏳ Scraping {len(items)} items...")
 
-        # PH timezone timestamp
         ph_time = datetime.now(pytz.timezone("Asia/Manila"))
         now = ph_time.strftime("%Y-%m-%d_%H-%M")
         output_file = f"Price_Checker_CS2_{now}.txt"
@@ -118,7 +122,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cleaned = clean_item_name(src)
                 price = get_price(cleaned)
 
-                # Try to parse PHP numeric value
+                # Parse PHP value
                 value = 0.0
                 if price not in ("No price listed", ""):
                     try:
@@ -161,7 +165,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(summary)
 
-        # Send output file
+        # Send file
         await context.bot.send_document(
             chat_id=update.effective_chat.id,
             document=open(output_file, "rb")
@@ -175,7 +179,7 @@ async def scrape_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# === MAIN BOT ENTRY ===
+# === MAIN ENTRY ===
 def main():
     if not BOT_TOKEN:
         raise ValueError("❌ BOT_TOKEN missing.")
